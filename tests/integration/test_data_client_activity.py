@@ -14,7 +14,6 @@ class TestGetActivityDataClient(BaseTestClient[PolymarketDataClient]):
     def _create_client(self) -> PolymarketDataClient:
         return PolymarketDataClient()
 
-
     def test_default_response(self, user: EthAddress) -> None:
         # Arrange / Act
         activities = self._client.get_activity(user=user, limit=self.LIMIT)
@@ -50,7 +49,16 @@ class TestGetActivityDataClient(BaseTestClient[PolymarketDataClient]):
 
     @pytest.mark.parametrize(
         "activity_type",
-        ["TRADE", "SPLIT", "MERGE", "REDEEM", "REWARD", "CONVERSION", "MAKER_REBATE", "YIELD"],
+        [
+            "TRADE",
+            "SPLIT",
+            "MERGE",
+            "REDEEM",
+            "REWARD",
+            "CONVERSION",
+            "MAKER_REBATE",
+            "YIELD",
+        ],
     )
     def test_type_filter(self, user: EthAddress, activity_type: str) -> None:
         # Arrange / Act
@@ -92,11 +100,15 @@ class TestGetActivityDataClient(BaseTestClient[PolymarketDataClient]):
         # Assert
         assert isinstance(activities, list)
         assert all(isinstance(a, Activity) for a in activities)
-        assert all(start <= a.timestamp.replace(tzinfo=datetime.UTC) <= end for a in activities)
+        assert all(
+            start <= a.timestamp.replace(tzinfo=datetime.UTC) <= end for a in activities
+        )
 
     def test_pagination_offset_returns_results(self, user: EthAddress) -> None:
         # Arrange / Act
-        page2 = self._client.get_activity(user=user, limit=self.LIMIT, offset=self.LIMIT)
+        page2 = self._client.get_activity(
+            user=user, limit=self.LIMIT, offset=self.LIMIT
+        )
 
         # Assert
         assert isinstance(page2, list)

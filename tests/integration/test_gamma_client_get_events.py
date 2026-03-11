@@ -13,7 +13,6 @@ class TestGetEventsGammaClient(BaseTestClient[PolymarketGammaClient]):
     def _create_client(self) -> PolymarketGammaClient:
         return PolymarketGammaClient()
 
-
     def test_default_response(self) -> None:
         # Arrange / Act
         events = self._client.get_events(limit=self.LIMIT)
@@ -38,7 +37,9 @@ class TestGetEventsGammaClient(BaseTestClient[PolymarketGammaClient]):
     @pytest.mark.parametrize("ascending", [True, False])
     def test_ordering_by_id(self, ascending: bool) -> None:
         # Arrange / Act
-        events = self._client.get_events(limit=self.LIMIT, order="id", ascending=ascending)
+        events = self._client.get_events(
+            limit=self.LIMIT, order="id", ascending=ascending
+        )
 
         # Assert
         ids = [e.id for e in events]
@@ -46,18 +47,25 @@ class TestGetEventsGammaClient(BaseTestClient[PolymarketGammaClient]):
 
     def test_offset_returns_different_results(self) -> None:
         # Arrange / Act
-        page1 = self._client.get_events(limit=self.LIMIT, offset=0, order="id", ascending=True)
-        page2 = self._client.get_events(limit=self.LIMIT, offset=self.LIMIT, order="id", ascending=True)
+        page1 = self._client.get_events(
+            limit=self.LIMIT, offset=0, order="id", ascending=True
+        )
+        page2 = self._client.get_events(
+            limit=self.LIMIT, offset=self.LIMIT, order="id", ascending=True
+        )
 
         # Assert
         ids1 = {e.id for e in page1}
         ids2 = {e.id for e in page2}
         assert ids1.isdisjoint(ids2)
 
-    @pytest.mark.parametrize(("volume_min", "liquidity_min"), [
-        (1_000.0, None),
-        (None, 500.0),
-    ])
+    @pytest.mark.parametrize(
+        ("volume_min", "liquidity_min"),
+        [
+            (1_000.0, None),
+            (None, 500.0),
+        ],
+    )
     def test_numeric_min_filter(
         self, volume_min: float | None, liquidity_min: float | None
     ) -> None:
@@ -70,7 +78,9 @@ class TestGetEventsGammaClient(BaseTestClient[PolymarketGammaClient]):
         if volume_min is not None:
             assert all(e.volume is None or e.volume >= volume_min for e in events)
         if liquidity_min is not None:
-            assert all(e.liquidity is None or e.liquidity >= liquidity_min for e in events)
+            assert all(
+                e.liquidity is None or e.liquidity >= liquidity_min for e in events
+            )
 
     def test_end_date_min_filter(self) -> None:
         # Arrange

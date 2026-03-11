@@ -36,15 +36,21 @@ class TestGetPositionsDataClient(BaseTestClient[PolymarketDataClient]):
         limit = 5
 
         # Act
-        positions = self._client.get_positions(user=user, limit=limit, size_threshold=0.0)
+        positions = self._client.get_positions(
+            user=user, limit=limit, size_threshold=0.0
+        )
 
         # Assert
         assert len(positions) <= limit
 
     def test_pagination_returns_different_results(self, user: EthAddress) -> None:
         # Arrange / Act
-        page1 = self._client.get_positions(user=user, limit=self.LIMIT, size_threshold=0.0, offset=0)
-        page2 = self._client.get_positions(user=user, limit=self.LIMIT, size_threshold=0.0, offset=self.LIMIT)
+        page1 = self._client.get_positions(
+            user=user, limit=self.LIMIT, size_threshold=0.0, offset=0
+        )
+        page2 = self._client.get_positions(
+            user=user, limit=self.LIMIT, size_threshold=0.0, offset=self.LIMIT
+        )
 
         # Assert
         ids1 = {p.token_id for p in page1}
@@ -98,7 +104,9 @@ class TestGetPositionsDataClient(BaseTestClient[PolymarketDataClient]):
 
     def test_condition_id_list_filter(self, user: EthAddress) -> None:
         # Arrange: fetch multiple positions to build a list of condition_ids
-        all_positions = self._client.get_positions(user=user, size_threshold=0.0, limit=5)
+        all_positions = self._client.get_positions(
+            user=user, size_threshold=0.0, limit=5
+        )
         if len(all_positions) < 2:
             pytest.skip("Not enough positions available for this user")
         condition_ids = list({p.condition_id for p in all_positions})[:2]
@@ -140,7 +148,6 @@ class TestGetPositionsDataClient(BaseTestClient[PolymarketDataClient]):
             assert p.outcome != ""
             assert p.title != ""
 
-
     def test_prod_like_request(self, user: EthAddress) -> None:
         # Arrange
         limit = 100
@@ -161,4 +168,3 @@ class TestGetPositionsDataClient(BaseTestClient[PolymarketDataClient]):
         assert len(positions) <= limit
         assert all(isinstance(p, Position) for p in positions)
         assert all(p.size > 0 for p in positions)
-

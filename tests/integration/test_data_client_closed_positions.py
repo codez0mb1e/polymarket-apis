@@ -114,4 +114,3 @@ class TestGetClosedPositionsDataClient(BaseTestClient[PolymarketDataClient]):
         # Assert: check for fields that are commonly populated in production data
         assert any(p.realized_pnl != 0.0 for p in positions)
         assert any(p.total_bought > 0.0 for p in positions)
-
