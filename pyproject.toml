@@ -58,6 +58,7 @@ managed = true
 
 [tool.pyrefly]
 python_version = "3.12"
+search_path = ["."]
 
 [tool.mypy]
 ignore_missing_imports = true
@@ -170,6 +171,10 @@ lint.ignore = [
     "FURB110"    # refurb - if-exp-instead-of-or-operator
 ]
 
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # Allow assert in tests
+"**/__init__.py" = ["F401"]  # Allow unused imports in __init__ files
 
 [project.urls]
 repository = "https://github.com/qualiaenjoyer/polymarket-apis"
