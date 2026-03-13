@@ -10,6 +10,7 @@ The key points:
 # %% Imports ----
 import signal
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,19 +27,18 @@ from rich.table import Table
 
 from polymarket_apis.clients.websockets_client import (
     PolymarketWebsocketsClient,
+    parse_live_data_event,
     parse_market_event,
 )
 from polymarket_apis.types.clob_types import OrderSummary
 from polymarket_apis.types.websockets_types import (
+    AssetPriceUpdateEvent,
     LastTradePriceEvent,
     OrderBookSummaryEvent,
     PriceChangeEvent,
 )
 
 # %% Constants ----
-
-# https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1773232200
-
 marker_slug = "ethereum-up-or-down-march-124"
 
 token_ids: Final[dict[str, str]] = {
@@ -50,19 +50,21 @@ token_ids: Final[dict[str, str]] = {
 SAVE_SNAPSHOT: Final[bool] = True
 SNAPSHOT_DIR: Final[Path] = Path("data/bitcoin_up_or_down_5min")
 MAX_LEVELS: Final[int] = 5  # price levels shown per side
-
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
+PRICE_FEED_SYMBOL: Final[str] = "btc/usd"
 
 
+# %% State ----
 @dataclass
 class BookState:
     """Mutable order book state for a single token."""
 
     token_id: str
-    bids: dict[float, float] = field(default_factory=dict[float, float])  # price -> size
-    asks: dict[float, float] = field(default_factory=dict[float, float])  # price -> size
+    bids: dict[float, float] = field(
+        default_factory=dict[float, float]
+    )  # price -> size
+    asks: dict[float, float] = field(
+        default_factory=dict[float, float]
+    )  # price -> size
     last_trade_price: float | None = None
     last_trade_size: float | None = None
     tx_hash: str | None = None
@@ -75,29 +77,44 @@ def _make_state() -> dict[str, BookState]:
 
 order_books: dict[str, BookState] = _make_state()
 
-# ---------------------------------------------------------------------------
-# Snapshot accumulation buffers (populated when SAVE_SNAPSHOT is True)
-# ---------------------------------------------------------------------------
 
-bbo_records: list[dict[str, Any]] = []    # top-N bid/ask levels per book update
+# %% Snapshot accumulation buffers (populated when SAVE_SNAPSHOT is True) ----
+bbo_records: list[dict[str, Any]] = []  # top-N bid/ask levels per book update
 trade_records: list[dict[str, Any]] = []  # last-trade-price events
-
-# ---------------------------------------------------------------------------
-# State update helpers
-# ---------------------------------------------------------------------------
+price_feed_records: list[dict[str, Any]] = []  # price feed events
+current_price: float | None = None
 
 
-def _record_book_levels(server_ts: datetime, local_ts: datetime, state: BookState) -> None:
+# %% State update helpers ----
+def _record_book_levels(
+    server_ts: datetime, local_ts: datetime, state: BookState
+) -> None:
     """Append top-N bid and ask levels from *state* to bbo_records."""
     top_bids = sorted(state.bids.items(), key=lambda x: x[0], reverse=True)[:MAX_LEVELS]
     top_asks = sorted(state.asks.items(), key=lambda x: x[0])[:MAX_LEVELS]
     for level, (price, size) in enumerate(top_bids, 1):
         bbo_records.append(
-            {"server_timestamp": server_ts, "local_timestamp": local_ts, "token_id": state.token_id, "side": "BID", "level": level, "price": price, "size": size}
+            {
+                "server_timestamp": server_ts,
+                "local_timestamp": local_ts,
+                "token_id": state.token_id,
+                "side": "BID",
+                "level": level,
+                "price": price,
+                "size": size,
+            }
         )
     for level, (price, size) in enumerate(top_asks, 1):
         bbo_records.append(
-            {"server_timestamp": server_ts, "local_timestamp": local_ts, "token_id": state.token_id, "side": "ASK", "level": level, "price": price, "size": size}
+            {
+                "server_timestamp": server_ts,
+                "local_timestamp": local_ts,
+                "token_id": state.token_id,
+                "side": "ASK",
+                "level": level,
+                "price": price,
+                "size": size,
+            }
         )
 
 
@@ -119,13 +136,11 @@ def _apply_price_change(state: BookState, price: float, size: float, side: str) 
         book_side[price] = size
 
 
-# ---------------------------------------------------------------------------
-# Rendering
-# ---------------------------------------------------------------------------
-
-
+# %% Rendering ----
 def _book_table(state: BookState) -> Table:
-    short_id = token_ids.get(state.token_id, state.token_id[:6])  # friendly name or truncated id
+    short_id = token_ids.get(
+        state.token_id, state.token_id[:6]
+    )  # friendly name or truncated id
 
     table = Table(
         title=f"[bold]{short_id}[/bold]",
@@ -179,7 +194,9 @@ def _book_table(state: BookState) -> Table:
     if state.last_trade_price is not None:
         table.add_section()
         price_str = f"{state.last_trade_price * 100:.2f}"
-        size_str = f"{state.last_trade_size:.2f}" if state.last_trade_size is not None else "—"
+        size_str = (
+            f"{state.last_trade_size:.2f}" if state.last_trade_size is not None else "—"
+        )
         table.add_row(
             f"[dim]Last trade {price_str}\u00a2  x{size_str}[/dim]\u00a2 [dim](tx: {state.tx_hash[:6] if state.tx_hash else '—'})[/dim]",
             "",
@@ -190,18 +207,19 @@ def _book_table(state: BookState) -> Table:
 
 def _render() -> Panel:
     tables = [_book_table(order_books[tid]) for tid in token_ids]
+    price_str = (
+        f"  [white]{PRICE_FEED_SYMBOL.upper()} ${current_price:.2f}[/white]"
+        if current_price is not None
+        else ""
+    )
     return Panel(
         Columns(tables, equal=True, expand=True),
-        title="[bold cyan]Bitcoin Up or Down - 5 Minutes[/bold cyan]",
+        title=f"[bold cyan]Bitcoin Up or Down - 5 Minutes[/bold cyan]{price_str}",
         border_style="bright_blue",
     )
 
 
-# ---------------------------------------------------------------------------
-# Event processing
-# ---------------------------------------------------------------------------
-
-
+# %% Event processing ----
 def _process_event(text: Text) -> None:
     local_ts = datetime.now(tz=UTC)
     ev = parse_market_event(text)
@@ -237,30 +255,47 @@ def _process_event(text: Text) -> None:
             state.last_trade_size = ev.size
             state.tx_hash = ev.transaction_hash  # type: ignore[assignment]  # add transaction hash to state for demonstration
         if SAVE_SNAPSHOT:
-            trade_records.append({
-                "server_timestamp": ev.timestamp,
-                "local_timestamp": local_ts,
-                "token_id": ev.token_id,
-                "price": ev.price,
-                "size": ev.size,
-                "side": ev.side,
-                "tx_hash": ev.transaction_hash,
-            })
+            trade_records.append(
+                {
+                    "server_timestamp": ev.timestamp,
+                    "local_timestamp": local_ts,
+                    "token_id": ev.token_id,
+                    "price": ev.price,
+                    "size": ev.size,
+                    "side": ev.side,
+                    "tx_hash": ev.transaction_hash,
+                }
+            )
+
 
 # %% Subscribe to Polymarket Live Data Websockets ----
-# Using live_data_socket() of PolymarketWebsocketsClient to subscribe to market price for the specified token ids.
-# subscriptions = list(
-#     list(
-#       topic = "crypto_prices_chainlink",
-#       type = "*",
-#       filters = '{"symbol":"btc/usd"}'
-#     )
-#   )
-# Add a callback function to process incoming price events and print the price to the console.
+price_feed_subscriptions: list[dict[str, Any]] = [
+    {
+        "topic": "crypto_prices_chainlink",
+        "type": "*",
+        "filters": f'{{"symbol":"{PRICE_FEED_SYMBOL}"}}',
+    }
+]
+
+
+def _on_price_event(text: Text) -> None:
+    """Callback for live_data_socket: updates current price and optionally records it."""
+    global current_price  # noqa: PLW0603
+    local_ts = datetime.now(tz=UTC)
+    ev = parse_live_data_event(text)
+    if isinstance(ev, AssetPriceUpdateEvent):
+        current_price = float(ev.payload.full_accuracy_value)
+        if SAVE_SNAPSHOT:
+            price_feed_records.append(
+                {
+                    "server_timestamp": ev.timestamp,
+                    "local_timestamp": local_ts,
+                    "price": current_price,
+                }
+            )
+
 
 # %% Entry point ----
-
-
 def _save_snapshots() -> None:
     """Write accumulated BBO and trade records to parquet files."""
     if not SAVE_SNAPSHOT:
@@ -273,7 +308,10 @@ def _save_snapshots() -> None:
     trades_path = SNAPSHOT_DIR / f"trades_{market_time}.parquet"
     pl.DataFrame(trade_records).write_parquet(trades_path)
 
-    print(f"Snapshots saved → {bbo_path}  |  {trades_path}")
+    price_feed_path = SNAPSHOT_DIR / f"prices_{market_time}.parquet"
+    pl.DataFrame(price_feed_records).write_parquet(price_feed_path)
+
+    print(f"Snapshots saved → {bbo_path}  |  {trades_path}  |  {price_feed_path}")
 
 
 def main() -> None:
@@ -288,13 +326,30 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        with Live(_render(), console=console, refresh_per_second=10, screen=True) as live:
+        with Live(
+            _render(), console=console, refresh_per_second=10, screen=True
+        ) as live:
 
-            def on_event(text: Text) -> None:
+            def on_market_event(text: Text) -> None:
                 _process_event(text)
                 live.update(_render())
 
-            client.market_socket(token_ids=list(token_ids), process_event=on_event)
+            def on_price_event(text: Text) -> None:
+                _on_price_event(text)
+                live.update(_render())
+
+            threading.Thread(
+                target=client.live_data_socket,
+                kwargs={
+                    "subscriptions": price_feed_subscriptions,
+                    "process_event": on_price_event,
+                },
+                daemon=True,
+            ).start()
+
+            client.market_socket(
+                token_ids=list(token_ids), process_event=on_market_event
+            )
     finally:
         _save_snapshots()
 

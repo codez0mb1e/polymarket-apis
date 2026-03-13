@@ -24,6 +24,10 @@ dependencies = [
 lint = [
     "ruff>=0.12.0"
 ]
+examples = [
+    "rich>=13.0.0",
+    "polars>=1.0.0",
+]
 dev = [
     "ruff>=0.12.0",
     "notebook>=7.3.2",
