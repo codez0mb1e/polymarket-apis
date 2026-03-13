@@ -25,6 +25,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
+from polymarket_apis.clients.gamma_client import PolymarketGammaClient
 from polymarket_apis.clients.websockets_client import (
     PolymarketWebsocketsClient,
     parse_live_data_event,
@@ -39,19 +40,28 @@ from polymarket_apis.types.websockets_types import (
 )
 
 # %% Constants ----
-marker_slug = "ethereum-up-or-down-march-124"
-
-token_ids: Final[dict[str, str]] = {
-    "115296421197388697879349230796240062735526030776147866945358625922780240459674": "Token UP",
-    "40003453655508075727983149701309988407868499288804390240611905294885634486371": "Token DOWN",
-}
-
-
 SAVE_SNAPSHOT: Final[bool] = True
-SNAPSHOT_DIR: Final[Path] = Path("data/bitcoin_up_or_down_5min")
+SNAPSHOT_DIR: Final[Path] = Path("data/btc_updown_5m")
 MAX_LEVELS: Final[int] = 5  # price levels shown per side
 PRICE_FEED_SYMBOL: Final[str] = "btc/usd"
 
+TARGET_TAG_ID: Final[int] = 102892  # "5 Minutes" tag_id on Polymarket
+
+# %% Market and token selection ----
+gamma_client = PolymarketGammaClient()
+markets = gamma_client.get_markets(active=True, closed=False, tag_id=TARGET_TAG_ID, limit=100)
+
+markets = [m for m in markets if m.slug.startswith("btc-updown-5m")]
+target_time = int(datetime.now(tz=UTC).timestamp()) - 300
+target_market = min(markets, key=lambda m: abs(int(m.slug.rsplit("-", maxsplit=1)[-1]) - target_time))
+
+
+market_slug = target_market.slug
+market_time = int(target_market.slug.rsplit("-", maxsplit=1)[-1])
+token_ids: dict[str, str] = {
+    target_market.token_ids[0]: "UP",
+    target_market.token_ids[1]: "DOWN",
+}
 
 # %% State ----
 @dataclass
@@ -214,7 +224,7 @@ def _render() -> Panel:
     )
     return Panel(
         Columns(tables, equal=True, expand=True),
-        title=f"[bold cyan]Bitcoin Up or Down - 5 Minutes[/bold cyan]{price_str}",
+        title=f"[bold cyan]{market_slug}[/bold cyan] {price_str}",
         border_style="bright_blue",
     )
 
@@ -296,12 +306,11 @@ def _on_price_event(text: Text) -> None:
 
 
 # %% Entry point ----
-def _save_snapshots() -> None:
+def _save_snapshots(market_time: int) -> None:
     """Write accumulated BBO and trade records to parquet files."""
     if not SAVE_SNAPSHOT:
         return
 
-    market_time = marker_slug.rsplit("-", maxsplit=1)[-1]
     bbo_path = SNAPSHOT_DIR / f"ob_snapshots_{market_time}.parquet"
     pl.DataFrame(bbo_records).write_parquet(bbo_path)
 
@@ -319,7 +328,7 @@ def main() -> None:
     client = PolymarketWebsocketsClient()
 
     def _shutdown(signum: int, frame: object) -> None:  # noqa: ARG001
-        _save_snapshots()
+        _save_snapshots(market_time)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
