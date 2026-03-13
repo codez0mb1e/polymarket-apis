@@ -27,6 +27,8 @@ lint = [
 examples = [
     "rich>=13.0.0",
     "polars>=1.0.0",
+    "pandas>=3.0.1",
+    "pyarrow>=23.0.1",
 ]
 dev = [
     "ruff>=0.12.0",

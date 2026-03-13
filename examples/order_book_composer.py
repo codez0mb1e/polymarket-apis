@@ -14,6 +14,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from time import sleep
 from typing import Any, Final
 
 import polars as pl
@@ -47,12 +48,30 @@ PRICE_FEED_SYMBOL: Final[str] = "btc/usd"
 
 TARGET_TAG_ID: Final[int] = 102892  # "5 Minutes" tag_id on Polymarket
 
+# %% Waiting time to start ----
+print("Starting Order Book Composer example...")
+print("Waiting for the next suitable market to appear (expiring ~5 minutes from now)...")
+
+# New market opens every 5 minutes, e.g. at 12:00:00, 12:05:00, etc.
+# We want to subscribe earlier (-2 seconds) than new market will be opened
+# to make sure we catch the initial snapshot event with full order book state.
+
+def wait_for_next_market() -> None:
+    now = datetime.now(tz=UTC)
+    seconds_until_next_market = (300 - (now.timestamp() % 300)) - 3
+    if seconds_until_next_market > 0:
+        print(f"Sleeping for {seconds_until_next_market:.0f} seconds...")
+        sleep(seconds_until_next_market)
+
+
+wait_for_next_market()
+
 # %% Market and token selection ----
 gamma_client = PolymarketGammaClient()
 markets = gamma_client.get_markets(active=True, closed=False, tag_id=TARGET_TAG_ID, limit=100)
 
 markets = [m for m in markets if m.slug.startswith("btc-updown-5m")]
-target_time = int(datetime.now(tz=UTC).timestamp())  # target market expiring ~5 minutes from now (allowing some buffer for clock skew and market selection)
+target_time = int(datetime.now(tz=UTC).timestamp())
 target_market = min(markets, key=lambda m: abs(int(m.slug.rsplit("-", maxsplit=1)[-1]) - target_time))
 
 
@@ -86,6 +105,15 @@ def _make_state() -> dict[str, BookState]:
 
 
 order_books: dict[str, BookState] = _make_state()
+
+
+def _all_books_empty() -> bool:
+    """Return True when all initialized books have no bid/ask levels."""
+    if not all(state.initialized for state in order_books.values()):
+        return False
+    return all(
+        (len(state.bids) + len(state.asks)) == 0 for state in order_books.values()
+    )
 
 
 # %% Snapshot accumulation buffers (populated when SAVE_SNAPSHOT is True) ----
@@ -153,7 +181,7 @@ def _book_table(state: BookState) -> Table:
     )  # friendly name or truncated id
 
     table = Table(
-        title=f"[bold]{short_id}[/bold]",
+        title=f"[bold]{short_id} token[/bold]",
         box=box.SIMPLE_HEAD,
         show_header=True,
         header_style="bold white",
@@ -203,12 +231,12 @@ def _book_table(state: BookState) -> Table:
 
     if state.last_trade_price is not None:
         table.add_section()
-        price_str = f"{state.last_trade_price * 100:.2f}"
+        price_str = f"{state.last_trade_price * 100:.0f}"
         size_str = (
             f"{state.last_trade_size:.2f}" if state.last_trade_size is not None else "—"
         )
         table.add_row(
-            f"[dim]Last trade {price_str}\u00a2  x{size_str}[/dim]\u00a2 [dim](tx: {state.tx_hash[:6] if state.tx_hash else '—'})[/dim]",
+            f"[dim]Last trade {price_str}\u00a2  x{size_str}[/dim] [dim](tx: {state.tx_hash[:6] if state.tx_hash else '—'})[/dim]",
             "",
         )
 
@@ -224,13 +252,13 @@ def _render() -> Panel:
     )
     return Panel(
         Columns(tables, equal=True, expand=True),
-        title=f"[bold cyan]{market_slug}[/bold cyan] {price_str}",
+        title=f"[bold cyan]Market {market_slug}[/bold cyan] {price_str}",
         border_style="bright_blue",
     )
 
 
 # %% Event processing ----
-def _process_event(text: Text) -> None:
+def _process_event(text: Text) -> bool:
     local_ts = datetime.now(tz=UTC)
     ev = parse_market_event(text)
 
@@ -263,7 +291,7 @@ def _process_event(text: Text) -> None:
         if state is not None:
             state.last_trade_price = ev.price
             state.last_trade_size = ev.size
-            state.tx_hash = ev.transaction_hash  # type: ignore[assignment]  # add transaction hash to state for demonstration
+            state.tx_hash = ev.transaction_hash
         if SAVE_SNAPSHOT:
             trade_records.append(
                 {
@@ -276,6 +304,8 @@ def _process_event(text: Text) -> None:
                     "tx_hash": ev.transaction_hash,
                 }
             )
+
+    return _all_books_empty()
 
 
 # %% Subscribe to Polymarket Live Data Websockets ----
@@ -326,6 +356,7 @@ def _save_snapshots(market_time: int) -> None:
 def main() -> None:
     console = Console()
     client = PolymarketWebsocketsClient()
+    shutdown_requested = threading.Event()
 
     def _shutdown(signum: int, frame: object) -> None:  # noqa: ARG001
         _save_snapshots(market_time)
@@ -340,8 +371,14 @@ def main() -> None:
         ) as live:
 
             def on_market_event(text: Text) -> None:
-                _process_event(text)
+                should_shutdown = _process_event(text)
                 live.update(_render())
+                if should_shutdown and not shutdown_requested.is_set():
+                    shutdown_requested.set()
+                    console.print(
+                        "[yellow]All bids/asks are empty, closing websocket channels.[/yellow]"
+                    )
+                    raise SystemExit(0)
 
             def on_price_event(text: Text) -> None:
                 _on_price_event(text)
@@ -361,6 +398,8 @@ def main() -> None:
             )
     finally:
         _save_snapshots(market_time)
+        print("Exiting...")
+        sleep(1)  # allow time for final console output before exit
 
 
 if __name__ == "__main__":
