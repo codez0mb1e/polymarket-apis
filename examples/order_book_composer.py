@@ -41,7 +41,7 @@ from polymarket_apis.types.websockets_types import (
 
 # %% Constants ----
 SAVE_SNAPSHOT: Final[bool] = True
-SNAPSHOT_DIR: Final[Path] = Path("data/btc_updown_5m")
+SNAPSHOT_DIR: Final[Path] = Path("data/btc-updown-5m")
 MAX_LEVELS: Final[int] = 5  # price levels shown per side
 PRICE_FEED_SYMBOL: Final[str] = "btc/usd"
 
@@ -52,7 +52,7 @@ gamma_client = PolymarketGammaClient()
 markets = gamma_client.get_markets(active=True, closed=False, tag_id=TARGET_TAG_ID, limit=100)
 
 markets = [m for m in markets if m.slug.startswith("btc-updown-5m")]
-target_time = int(datetime.now(tz=UTC).timestamp()) - 300
+target_time = int(datetime.now(tz=UTC).timestamp())  # target market expiring ~5 minutes from now (allowing some buffer for clock skew and market selection)
 target_market = min(markets, key=lambda m: abs(int(m.slug.rsplit("-", maxsplit=1)[-1]) - target_time))
 
 
@@ -294,7 +294,7 @@ def _on_price_event(text: Text) -> None:
     local_ts = datetime.now(tz=UTC)
     ev = parse_live_data_event(text)
     if isinstance(ev, AssetPriceUpdateEvent):
-        current_price = float(ev.payload.full_accuracy_value)
+        current_price = float(ev.payload.value)
         if SAVE_SNAPSHOT:
             price_feed_records.append(
                 {
@@ -360,7 +360,7 @@ def main() -> None:
                 token_ids=list(token_ids), process_event=on_market_event
             )
     finally:
-        _save_snapshots()
+        _save_snapshots(market_time)
 
 
 if __name__ == "__main__":
