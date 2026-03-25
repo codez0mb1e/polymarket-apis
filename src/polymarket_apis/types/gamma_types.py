@@ -34,7 +34,7 @@ class OptimizedImage(BaseModel):
     )
     rel_id: Optional[int] = Field(None, alias="relID")
     field: Optional[str] = Field(None, alias="field")
-    relname: Optional[str] = Field(None, alias="relname")
+    relname: Optional[str] = None
 
 
 class GammaMarket(BaseModel):
@@ -60,6 +60,7 @@ class GammaMarket(BaseModel):
     y_axis_value: Optional[str] = Field(None, alias="yAxisValue")
     denomination_token: Optional[str] = Field(None, alias="denominationToken")
     fee: Optional[str] = Field(None, alias="fee")
+    fee_type: Optional[str] = Field(None, alias="feeType")
     image: Optional[str] = Field(None, alias="image")
     icon: Optional[str] = Field(None, alias="icon")
     lower_bound: Optional[str] = Field(None, alias="lowerBound")
@@ -139,6 +140,7 @@ class GammaMarket(BaseModel):
     custom_liveness: Optional[int] = Field(None, alias="customLiveness")
     accepting_orders: Optional[bool] = Field(None, alias="acceptingOrders")
     notifications_enabled: Optional[bool] = Field(None, alias="notificationsEnabled")
+    requires_translation: Optional[bool] = Field(None, alias="requiresTranslation")
     score: Optional[int] = Field(None, alias="score")
     image_optimized: Optional[OptimizedImage] = Field(None, alias="imageOptimized")
     icon_optimized: Optional[OptimizedImage] = Field(None, alias="iconOptimized")
@@ -175,7 +177,7 @@ class GammaMarket(BaseModel):
     show_gmp_outcome: Optional[bool] = Field(None, alias="showGmpOutcome")
     manual_activation: Optional[bool] = Field(None, alias="manualActivation")
     neg_risk_other: Optional[bool] = Field(None, alias="negRiskOther")
-    game_id: Optional[str] = Field(None, alias="gameId")
+    game_id: Optional[int] = Field(None, alias="gameId")
     group_item_range: Optional[str] = Field(None, alias="groupItemRange")
     sports_market_type: Optional[str] = Field(None, alias="sportsMarketType")
     line: Optional[float] = Field(None, alias="line")
@@ -197,6 +199,19 @@ class GammaMarket(BaseModel):
     holding_rewards_enabled: Optional[bool] = Field(None, alias="holdingRewardsEnabled")
     fees_enabled: Optional[bool] = Field(None, alias="feesEnabled")
     cyom: Optional[bool] = Field(None, alias="cyom")
+    neg_risk: Optional[bool] = Field(None, alias="negRisk")
+    neg_risk_request_id: Optional[str] = Field(None, alias="negRiskRequestID")
+    neg_risk_market_id: Optional[str] = Field(None, alias="negRiskMarketID")
+    sent_discord: Optional[bool] = Field(None, alias="sentDiscord")
+    twitter_card_last_refreshed: Optional[datetime] = Field(
+        None, alias="twitterCardLastRefreshed"
+    )
+    twitter_card_last_validated: Optional[datetime] = Field(
+        None, alias="twitterCardLastValidated"
+    )
+    twitter_card_location: Optional[str] = Field(None, alias="twitterCardLocation")
+    fee_schedule: dict[str, object] | None = Field(None, alias="feeSchedule")
+    maker_rebates_fee_share_bps: int | None = Field(None, alias="makerRebatesFeeShareBps")
 
     @field_validator("condition_id", mode="wrap")
     @classmethod
@@ -258,6 +273,7 @@ class Series(BaseModel):
     pyth_token_id: Optional[str] = Field(None, alias="pythTokenID")
     cg_asset_name: Optional[str] = Field(None, alias="cgAssetName")
     score: Optional[int] = Field(None, alias="score")
+    requires_translation: Optional[bool] = Field(None, alias="requiresTranslation")
     events: Optional[list[Event]] = Field(None, alias="events")
     collections: Optional[list[Collection]] = Field(None, alias="collections")
     categories: Optional[list[Category]] = Field(None, alias="categories")
@@ -298,6 +314,7 @@ class Tag(BaseModel):
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
     force_hide: Optional[bool] = Field(None, alias="forceHide")
     is_carousel: Optional[bool] = Field(None, alias="isCarousel")
+    requires_translation: Optional[bool] = Field(None, alias="requiresTranslation")
 
 
 class TagRelation(BaseModel):
@@ -422,6 +439,8 @@ class Team(BaseModel):
     logo: str
     abbreviation: str
     alias: Optional[str] = None
+    color: Optional[str] = None
+    provider_id: Optional[int | str] = Field(None, alias="providerId")
     created_at: datetime = Field(alias="createdAt")
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
 
@@ -431,18 +450,47 @@ class Sport(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    id: Optional[int] = None
     sport: str
     image: Optional[str] = None
     resolution: Optional[str] = None
     ordering: Optional[Literal["home", "away"]] = None
     tags: Optional[list[int]] = None
     series: Optional[int] = None
+    created_at: Optional[datetime] = Field(None, alias="createdAt")
 
     @field_validator("tags", mode="before")
     @classmethod
-    def split_string_to_int_list(cls, v: str | list[int]) -> list[int]:
+    def split_string_to_int_list(
+        cls, v: str | list[int | str]
+    ) -> list[int] | None:
         if isinstance(v, str):
-            return [int(i) for i in v.split(",")]
+            parsed: list[int] = []
+            for raw_item in v.split(","):
+                item = raw_item.strip()
+                try:
+                    parsed.append(int(item))
+                except ValueError:
+                    continue
+            return parsed
+        if isinstance(v, list):
+            parsed_list: list[int] = []
+            for list_item in v:
+                try:
+                    parsed_list.append(int(list_item))
+                except (TypeError, ValueError):
+                    continue
+            return parsed_list
+        return v
+
+    @field_validator("series", mode="before")
+    @classmethod
+    def normalize_series(cls, v: int | str | None) -> int | None:
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                return None
         return v
 
 
@@ -469,9 +517,10 @@ class Event(BaseModel):
     new: Optional[bool] = Field(None, alias="new")
     featured: Optional[bool] = Field(None, alias="featured")
     restricted: Optional[bool] = Field(None, alias="restricted")
+    requires_translation: Optional[bool] = Field(None, alias="requiresTranslation")
     liquidity: Optional[float] = Field(None, alias="liquidity")
     volume: Optional[float] = Field(None, alias="volume")
-    open_interest: Optional[int] = Field(None, alias="openInterest")
+    open_interest: Optional[float] = Field(None, alias="openInterest")
     sort_by: Optional[str] = Field(None, alias="sortBy")
     category: Optional[str] = Field(None, alias="category")
     subcategory: Optional[str] = Field(None, alias="subcategory")
@@ -519,6 +568,7 @@ class Event(BaseModel):
     automatically_active: Optional[bool] = Field(None, alias="automaticallyActive")
     event_date: Optional[datetime] = Field(None, alias="eventDate")
     start_time: Optional[datetime] = Field(None, alias="startTime")
+    game_id: Optional[int] = Field(None, alias="gameId")
     event_week: Optional[int] = Field(None, alias="eventWeek")
     series_slug: Optional[str] = Field(None, alias="seriesSlug")
     score: Optional[str] = Field(None, alias="score")
@@ -546,8 +596,14 @@ class Event(BaseModel):
         None, alias="scheduledDeploymentTimestamp"
     )
     game_status: Optional[str] = Field(None, alias="gameStatus")
-
-
+    cumulative_markets: Optional[int] = Field(None, alias="cumulativeMarkets")
+    event_metadata: Optional[dict[str, object]] = Field(None, alias="eventMetadata")
+    country_name: Optional[str] = Field(None, alias="countryName")
+    sportsradar_match_id: Optional[str] = Field(None, alias="sportsradarMatchId")
+    turn_provider_id: Optional[str] = Field(None, alias="turnProviderId")
+    election_type: Optional[str] = Field(None, alias="electionType")
+    
+    
 class ProfilePosition(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
