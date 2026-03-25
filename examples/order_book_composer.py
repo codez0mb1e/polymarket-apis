@@ -8,6 +8,7 @@ The key points:
 """
 
 # %% Imports ----
+import argparse
 import signal
 import sys
 import threading
@@ -41,10 +42,15 @@ from polymarket_apis.types.websockets_types import (
 )
 
 # %% Constants ----
+_parser = argparse.ArgumentParser(description="Order Book Composer")
+_parser.add_argument("--symbol", type=str, help="Asset symbol (e.g. btc, eth)")
+_args = _parser.parse_args()
+
+SYMBOL: Final[str] = _args.symbol.lower()
 SAVE_SNAPSHOT: Final[bool] = True
-SNAPSHOT_DIR: Final[Path] = Path("data/btc-updown-5m")
+SNAPSHOT_DIR: Final[Path] = Path(f"data/{SYMBOL}-updown-5m")
 MAX_LEVELS: Final[int] = 5  # price levels shown per side
-PRICE_FEED_SYMBOL: Final[str] = "btc/usd"
+PRICE_FEED_SYMBOL: Final[str] = f"{SYMBOL}/usd"
 
 TARGET_TAG_ID: Final[int] = 102892  # "5 Minutes" tag_id on Polymarket
 
@@ -58,7 +64,7 @@ print("Waiting for the next suitable market to appear (expiring ~5 minutes from 
 
 def wait_for_next_market() -> None:
     now = datetime.now(tz=UTC)
-    seconds_until_next_market = (300 - (now.timestamp() % 300)) - 3
+    seconds_until_next_market = (300 - (now.timestamp() % 300)) - 1
     if seconds_until_next_market > 0:
         print(f"Sleeping for {seconds_until_next_market:.0f} seconds...")
         sleep(seconds_until_next_market)
@@ -70,7 +76,7 @@ wait_for_next_market()
 gamma_client = PolymarketGammaClient()
 markets = gamma_client.get_markets(active=True, closed=False, tag_id=TARGET_TAG_ID, limit=100)
 
-markets = [m for m in markets if m.slug.startswith("btc-updown-5m")]
+markets = [m for m in markets if m.slug.startswith(f"{SYMBOL}-updown-5m")]
 target_time = int(datetime.now(tz=UTC).timestamp())
 target_market = min(markets, key=lambda m: abs(int(m.slug.rsplit("-", maxsplit=1)[-1]) - target_time))
 
@@ -129,8 +135,7 @@ def _record_book_levels(
 ) -> None:
     """Append top-N bid and ask levels from *state* to bbo_records."""
     top_bids = sorted(state.bids.items(), key=lambda x: x[0], reverse=True)[:MAX_LEVELS]
-    top_asks = sorted(state.asks.items(), key=lambda x: x[0])[:MAX_LEVELS]
-    for level, (price, size) in enumerate(top_bids, 1):
+    for level, (p, q) in enumerate(top_bids, 1):
         bbo_records.append(
             {
                 "server_timestamp": server_ts,
@@ -138,11 +143,13 @@ def _record_book_levels(
                 "token_id": state.token_id,
                 "side": "BID",
                 "level": level,
-                "price": price,
-                "size": size,
+                "price": p,
+                "size": q,
             }
         )
-    for level, (price, size) in enumerate(top_asks, 1):
+
+    top_asks = sorted(state.asks.items(), key=lambda x: x[0])[:MAX_LEVELS]
+    for level, (p, q) in enumerate(top_asks, 1):
         bbo_records.append(
             {
                 "server_timestamp": server_ts,
@@ -150,8 +157,8 @@ def _record_book_levels(
                 "token_id": state.token_id,
                 "side": "ASK",
                 "level": level,
-                "price": price,
-                "size": size,
+                "price": p,
+                "size": q,
             }
         )
 
@@ -160,8 +167,10 @@ def _apply_snapshot(state: BookState, event: OrderBookSummaryEvent) -> None:
     """Replace the full book with a snapshot from an OrderBookSummaryEvent."""
     state.bids = {o.price: o.size for o in event.bids}
     state.asks = {o.price: o.size for o in event.asks}
+
     if event.last_trade_price is not None:
         state.last_trade_price = event.last_trade_price
+
     state.initialized = True
 
 
@@ -282,6 +291,7 @@ def _process_event(text: Text) -> bool:
                 continue
             _apply_price_change(state, pc.price, pc.size, pc.side)
             affected.add(pc.token_id)
+
         if SAVE_SNAPSHOT:
             for token_id in affected:
                 _record_book_levels(ev.timestamp, local_ts, order_books[token_id])
@@ -292,6 +302,7 @@ def _process_event(text: Text) -> bool:
             state.last_trade_price = ev.price
             state.last_trade_size = ev.size
             state.tx_hash = ev.transaction_hash
+
         if SAVE_SNAPSHOT:
             trade_records.append(
                 {
