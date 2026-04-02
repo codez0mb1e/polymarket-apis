@@ -37,6 +37,17 @@ class OptimizedImage(BaseModel):
     relname: Optional[str] = None
 
 
+class FeeSchedule(BaseModel):
+    """Fee rate info for markets."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    exponent: int
+    rate: float
+    taker_only: bool = Field(alias="takerOnly")
+    rebate_rate: float = Field(alias="rebateRate")
+
+
 class GammaMarket(BaseModel):
     """Market model."""
 
@@ -135,8 +146,8 @@ class GammaMarket(BaseModel):
     volume_clob: Optional[float] = Field(None, alias="volumeClob")
     liquidity_amm: Optional[float] = Field(None, alias="liquidityAmm")
     liquidity_clob: Optional[float] = Field(None, alias="liquidityClob")
-    maker_base_fee: Optional[int] = Field(None, alias="makerBaseFee")
-    taker_base_fee: Optional[int] = Field(None, alias="takerBaseFee")
+    maker_base_fee: Optional[Literal[0, 1000]] = Field(None, alias="makerBaseFee")
+    taker_base_fee: Optional[Literal[0, 1000]] = Field(None, alias="takerBaseFee")
     custom_liveness: Optional[int] = Field(None, alias="customLiveness")
     accepting_orders: Optional[bool] = Field(None, alias="acceptingOrders")
     notifications_enabled: Optional[bool] = Field(None, alias="notificationsEnabled")
@@ -210,7 +221,7 @@ class GammaMarket(BaseModel):
         None, alias="twitterCardLastValidated"
     )
     twitter_card_location: Optional[str] = Field(None, alias="twitterCardLocation")
-    fee_schedule: dict[str, object] | None = Field(None, alias="feeSchedule")
+    fee_schedule: Optional[FeeSchedule] = Field(None, alias="feeSchedule")
     maker_rebates_fee_share_bps: int | None = Field(None, alias="makerRebatesFeeShareBps")
 
     @field_validator("condition_id", mode="wrap")
@@ -602,8 +613,8 @@ class Event(BaseModel):
     sportsradar_match_id: Optional[str] = Field(None, alias="sportsradarMatchId")
     turn_provider_id: Optional[str] = Field(None, alias="turnProviderId")
     election_type: Optional[str] = Field(None, alias="electionType")
-    
-    
+
+
 class ProfilePosition(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

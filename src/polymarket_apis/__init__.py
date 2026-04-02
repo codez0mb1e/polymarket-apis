@@ -15,7 +15,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.5.4"
+__version__ = "0.5.7"
 __author__ = "Razvan Gheorghe"
 __email__ = "razvan@gheorghe.me"
 
@@ -31,11 +31,13 @@ if TYPE_CHECKING:
         PolymarketWeb3Client,
         PolymarketWebsocketsClient,
     )
+    from .types import FeeSchedule
     from .types.clob_types import ApiCreds, MarketOrderArgs, OrderArgs, OrderType
 
 __all__ = [
     "ApiCreds",
     "AsyncPolymarketGraphQLClient",
+    "FeeSchedule",
     "MarketOrderArgs",
     "OrderArgs",
     "OrderType",
@@ -55,6 +57,7 @@ __all__ = [
 _EXPORT_MAP = {
     "ApiCreds": ".types.clob_types",
     "AsyncPolymarketGraphQLClient": ".clients",
+    "FeeSchedule": ".types",
     "MarketOrderArgs": ".types.clob_types",
     "OrderArgs": ".types.clob_types",
     "OrderType": ".types.clob_types",
