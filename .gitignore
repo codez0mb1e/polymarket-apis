@@ -8,3 +8,7 @@ wheels/
 
 # venv
 .venv
+
+# examples data
+**/*.parquet
+**/*.rds

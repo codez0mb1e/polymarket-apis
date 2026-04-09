@@ -1,11 +1,5 @@
-"""
-Order Book Composer.
+"""Order Book Composer."""
 
-The key points:
-- For given pair asset ids subscribe to market_socket() of WS client
-- Listen OrderBookSummaryEvent and visualize it as Order Book (use rich for visualization in terminal)
-- Listen new orders via web-socket and actualize Order Book.
-"""
 
 # %% Imports ----
 import argparse
@@ -48,7 +42,7 @@ _args = _parser.parse_args()
 
 SYMBOL: Final[str] = _args.symbol.lower()
 SAVE_SNAPSHOT: Final[bool] = True
-SNAPSHOT_DIR: Final[Path] = Path(f"data/{SYMBOL}-updown-5m")
+SNAPSHOT_DIR: Final[Path] = Path(f"data/{SYMBOL}usdt-updown-5m")
 MAX_LEVELS: Final[int] = 5  # price levels shown per side
 PRICE_FEED_SYMBOL: Final[str] = f"{SYMBOL}/usd"
 
