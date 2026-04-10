@@ -32,6 +32,7 @@
     "$[].eventMetadata:object",
     "$[].eventWeek:number",
     "$[].featured:bool",
+    "$[].featuredOrder:number",
     "$[].gameId:number",
     "$[].gmpChartMode:str",
     "$[].icon:str",
