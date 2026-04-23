@@ -43,7 +43,7 @@ _args = _parser.parse_args()
 SYMBOL: Final[str] = _args.symbol.lower()
 SAVE_SNAPSHOT: Final[bool] = True
 SNAPSHOT_DIR: Final[Path] = Path(f"data/{SYMBOL}usdt-updown-5m")
-MAX_LEVELS: Final[int] = 5  # price levels shown per side
+MAX_LEVELS: Final[int] = 3  # price levels shown per side
 PRICE_FEED_SYMBOL: Final[str] = f"{SYMBOL}/usd"
 
 TARGET_TAG_ID: Final[int] = 102892  # "5 Minutes" tag_id on Polymarket
@@ -58,7 +58,7 @@ print("Waiting for the next suitable market to appear (expiring ~5 minutes from 
 
 def wait_for_next_market() -> None:
     now = datetime.now(tz=UTC)
-    seconds_until_next_market = (300 - (now.timestamp() % 300)) - 1
+    seconds_until_next_market = (300 - (now.timestamp() % 300)) - 2
     if seconds_until_next_market > 0:
         print(f"Sleeping for {seconds_until_next_market:.0f} seconds...")
         sleep(seconds_until_next_market)
