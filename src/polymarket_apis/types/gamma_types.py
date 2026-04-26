@@ -615,6 +615,7 @@ class Event(BaseModel):
     election_type: Optional[str] = Field(None, alias="electionType")
 
 
+    parent_event_id: int | None = Field(None, alias="parentEventId")
 class ProfilePosition(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
