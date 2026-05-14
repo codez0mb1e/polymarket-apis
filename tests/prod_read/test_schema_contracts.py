@@ -9,6 +9,7 @@ import pytest
 
 from polymarket_apis.testing.contract_assertions import (
     assert_api_contract,
+    contract_failure,
     fail_contract,
     fetch_json,
 )
@@ -51,7 +52,7 @@ def gamma_markets_payload(http_client: httpx.Client) -> list[dict[str, Any]]:
         http_client,
         "https://gamma-api.polymarket.com/markets",
         params={
-            "limit": 5,
+            "limit": 25,
             "offset": 0,
             "active": True,
             "closed": False,
@@ -68,12 +69,77 @@ def gamma_markets_payload(http_client: httpx.Client) -> list[dict[str, Any]]:
 
 
 @pytest.fixture(scope="module")
-def gamma_market(gamma_markets_payload: list[dict[str, Any]]) -> GammaMarket:
+def validated_gamma_markets(
+    gamma_markets_payload: list[dict[str, Any]],
+) -> list[GammaMarket]:
     markets = cast(
         "list[GammaMarket]",
         assert_api_contract("gamma /markets", list[GammaMarket], gamma_markets_payload),
     )
+    return markets
+
+
+@pytest.fixture(scope="module")
+def gamma_market(validated_gamma_markets: list[GammaMarket]) -> GammaMarket:
+    markets = validated_gamma_markets
     return markets[0]
+
+
+@pytest.fixture(scope="module")
+def clob_order_book_sample(
+    http_client: httpx.Client,
+    validated_gamma_markets: list[GammaMarket],
+) -> tuple[GammaMarket, OrderBookSummary]:
+    unavailable_markets: list[str] = []
+
+    for market in validated_gamma_markets:
+        if not market.token_ids:
+            continue
+
+        market_unavailable_tokens: list[str] = []
+        for token_id in market.token_ids:
+            try:
+                response = http_client.get(
+                    "https://clob.polymarket.com/book",
+                    params={"token_id": token_id},
+                )
+            except httpx.RequestError as exc:
+                market_unavailable_tokens.append(f"{token_id} (request error: {exc!r})")
+                continue
+
+            if response.status_code == 404:
+                market_unavailable_tokens.append(f"{token_id} (HTTP 404)")
+                continue
+
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                fail_contract(
+                    "endpoint unavailable",
+                    (
+                        f"clob /book returned HTTP {exc.response.status_code}.\n"
+                        f"URL: {exc.request.url}\n"
+                        f"Token id: {token_id}\n"
+                        "This looks like endpoint instability, auth/rate limiting, or an upstream outage."
+                    ),
+                )
+
+            return market, assert_api_contract(
+                "clob /book", OrderBookSummary, response.json()
+            )
+
+        if market_unavailable_tokens:
+            unavailable_markets.append(
+                f"{market.condition_id}: {', '.join(market_unavailable_tokens)}"
+            )
+
+    category = "endpoint unavailable"
+    msg = (
+        "clob /book returned no order book for any sampled Gamma market token id.\n"
+        f"Checked {len(validated_gamma_markets)} recent active Gamma markets.\n"
+        f"Tried: {'; '.join(unavailable_markets)}"
+    )
+    raise contract_failure(category, msg)
 
 
 @pytest.fixture(scope="module")
@@ -240,7 +306,33 @@ def leaderboard_user(leaderboard_payload: list[dict[str, Any]]) -> LeaderboardUs
             leaderboard_payload,
         ),
     )
-    return users[0]
+    with httpx.Client(http2=True, timeout=30.0) as client:
+        for user in users:
+            try:
+                response = client.get(
+                    "https://lb-api.polymarket.com/profit",
+                    params={
+                        "address": user.proxy_wallet,
+                        "window": "all",
+                        "limit": 1,
+                    },
+                )
+                response.raise_for_status()
+            except httpx.HTTPError:
+                continue
+
+            payload = response.json()
+            metrics = assert_api_contract("lb-api /profit", list[UserMetric], payload)
+            if metrics:
+                return user
+
+    fail_contract(
+        "endpoint unavailable",
+        (
+            "lb-api /profit returned no rows for any sampled leaderboard user.\n"
+            "Tried the top 5 leaderboard candidates from data /v1/leaderboard."
+        ),
+    )
 
 
 @pytest.mark.prod_read
@@ -375,19 +467,9 @@ def test_clob_market_schema(
 
 @pytest.mark.prod_read
 def test_clob_order_book_schema(
-    http_client: httpx.Client,
-    gamma_market: GammaMarket,
+    clob_order_book_sample: tuple[GammaMarket, OrderBookSummary],
 ) -> None:
-    if not gamma_market.token_ids:
-        fail_contract("schema mismatch", "Gamma market is missing token ids.")
-    token_ids = gamma_market.token_ids
-    payload = fetch_json(
-        "clob /book",
-        http_client,
-        "https://clob.polymarket.com/book",
-        params={"token_id": token_ids[0]},
-    )
-    order_book = assert_api_contract("clob /book", OrderBookSummary, payload)
+    gamma_market, order_book = clob_order_book_sample
     if order_book.condition_id != gamma_market.condition_id:
         fail_contract(
             "schema mismatch",
@@ -601,7 +683,10 @@ def test_lb_profit_schema(
     )
     metrics = assert_api_contract("lb-api /profit", list[UserMetric], payload)
     if not metrics:
-        fail_contract("endpoint unavailable", "lb-api /profit returned no rows.")
+        fail_contract(
+            "endpoint unavailable",
+            "lb-api /profit returned no rows for the selected leaderboard user.",
+        )
 
 
 @pytest.mark.prod_read

@@ -1,9 +1,8 @@
 import logging
-from datetime import datetime
-from enum import StrEnum
+from datetime import UTC, datetime
+from enum import IntEnum, StrEnum
 from typing import Any, Literal, Optional, TypeVar, Union, cast
 
-from py_order_utils.model import SignedOrder
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -17,7 +16,8 @@ from pydantic import (
 )
 
 from ..types.common import EthAddress, Keccak256, TimeseriesPoint
-from ..utilities.constants import ADDRESS_ZERO
+from ..utilities.constants import BYTES32_ZERO
+from ..utilities.order_builder.model import SignedOrder
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +169,12 @@ class MarketRewards(BaseModel):
     market_competitiveness: float
 
 
+class MarketIDs(BaseModel):
+    condition_id: Keccak256
+    primary_token_id: str
+    secondary_token_id: str
+
+
 class ClobMarket(BaseModel):
     # Core market information
     token_ids: list[Token] = Field(alias="tokens")
@@ -254,6 +260,52 @@ class ClobMarket(BaseModel):
             raise
 
 
+class ClobFeeData(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    rate: float = Field(alias="r")
+    exponent: int = Field(alias="e")
+    taker_only: bool = Field(alias="to")
+
+
+class FeeInfo(BaseModel):
+    rate: float = 0.0
+    exponent: float = 0.0
+
+
+class ClobMarketInfoToken(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    token_id: str = Field(alias="t")
+    outcome: str = Field(alias="o")
+
+
+class ClobMarketInfoRewards(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    min_size: Optional[float] = Field(default=None, alias="mi", ge=0)
+    max_spread: Optional[float] = Field(default=None, alias="ma", ge=0)
+    enabled: Optional[bool] = Field(default=None, alias="e")
+    minimum_order_age_seconds: Optional[int] = Field(default=None, alias="moas", ge=0)
+
+
+class ClobMarketInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    game_start_time: Optional[datetime] = Field(None, alias="gst")
+    rewards: ClobMarketInfoRewards = Field(alias="r")
+    tokens: list[ClobMarketInfoToken] = Field(alias="t")
+    minimum_order_size: float = Field(alias="mos")
+    minimum_tick_size: float = Field(alias="mts")
+    maker_base_fee: Optional[int] = Field(None, alias="mbf")
+    taker_base_fee: Optional[int] = Field(None, alias="tbf")
+    rfq_enabled: Optional[bool] = Field(None, alias="rfqe")
+    taker_order_delay_enabled: Optional[bool] = Field(None, alias="itode")
+    blockaid_check_enabled: bool = Field(alias="ibce")
+    fee_data: Optional[ClobFeeData] = Field(None, alias="fd")
+    minimum_order_age_seconds: Optional[int] = Field(None, alias="oas")
+
+
 class OpenOrder(BaseModel):
     order_id: Keccak256 = Field(alias="id")
     status: str
@@ -280,7 +332,6 @@ class MakerOrder(BaseModel):
     matched_amount: float
     price: float
     outcome: str
-    fee_rate_bps: float
 
 
 class PolygonTrade(BaseModel):  # type: ignore[no-redef] # id is the same as trade_id
@@ -331,7 +382,9 @@ class OrderSummary(BaseModel):
 class PriceLevel(OrderSummary):
     side: Literal["BUY", "SELL"]
 
+
 TickSize = Literal["0.1", "0.01", "0.001", "0.0001"]
+
 
 class OrderBookSummary(BaseModel):
     condition_id: Keccak256 = Field(alias="market")
@@ -346,7 +399,9 @@ class OrderBookSummary(BaseModel):
     neg_risk: Optional[bool] = None
 
     @field_validator("last_trade_price", mode="before")
-    def handle_empty_last_trade_price(cls, v: Optional[float] | Literal[""]) -> Optional[float]:
+    def handle_empty_last_trade_price(
+        cls, v: Optional[float] | Literal[""]
+    ) -> Optional[float]:
         if v == "":
             return None
         return v
@@ -383,6 +438,13 @@ class OrderType(StrEnum):
     GTD = "GTD"  # Good Till Date
     FOK = "FOK"  # Fill or Kill
     FAK = "FAK"  # Fill and Kill
+
+
+class SignatureType(IntEnum):
+    EOA = 0
+    POLY_PROXY = 1
+    POLY_GNOSIS_SAFE = 2
+    POLY_1271 = 3
 
 
 class CreateOrderOptions(BaseModel):
@@ -422,24 +484,30 @@ class OrderArgs(BaseModel):
     Side of the order
     """
 
-    fee_rate_bps: int = 0
+    expiration: int | datetime = 0
     """
-    Fee rate, in basis points, charged to the order maker, charged on proceeds
-    """
-
-    nonce: int = 0
-    """
-    Nonce used for onchain cancellations
+    Timestamp after which the order is expired. Accepts Unix seconds or a
+    timezone-aware datetime. This is posted to the API, but is not part of the
+    CLOB V2 signed EIP-712 order.
     """
 
-    expiration: int = 0
+    @field_validator("expiration", mode="before")
+    def normalize_expiration(cls, v: float | datetime) -> int:
+        if isinstance(v, datetime):
+            if v.tzinfo is None or v.utcoffset() is None:
+                msg = "expiration datetime must be timezone-aware"
+                raise ValueError(msg)
+            return int(v.astimezone(UTC).timestamp())
+        return int(v)
+
+    builder_code: str = BYTES32_ZERO
     """
-    Timestamp after which the order is expired.
+    Optional CLOB V2 builder attribution code.
     """
 
-    taker: str = ADDRESS_ZERO
+    metadata: str = BYTES32_ZERO
     """
-    Address of the order taker. The zero address is used to indicate a public order.
+    Optional CLOB V2 order metadata.
     """
 
 
@@ -465,22 +533,22 @@ class MarketOrderArgs(BaseModel):
     Price used to create the order
     """
 
-    fee_rate_bps: int = 0
-    """
-    Fee rate, in basis points, charged to the order maker, charged on proceeds.
-    """
-
-    nonce: int = 0
-    """
-    Nonce used for onchain cancellations.
-    """
-
-    taker: str = ADDRESS_ZERO
-    """
-    Address of the order taker. The zero address is used to indicate a public order.
-    """
-
     order_type: OrderType = OrderType.FOK
+
+    user_usdc_balance: float = 0
+    """
+    User pUSD balance available for market order sizing. Reserved for V2 parity.
+    """
+
+    builder_code: str = BYTES32_ZERO
+    """
+    Optional CLOB V2 builder attribution code.
+    """
+
+    metadata: str = BYTES32_ZERO
+    """
+    Optional CLOB V2 order metadata.
+    """
 
 
 class PostOrdersArgs(BaseModel):
@@ -495,12 +563,22 @@ class ContractConfig(BaseModel):
 
     exchange: EthAddress
     """
-    The exchange contract responsible for matching orders.
+    The V2 exchange contract responsible for matching orders.
+    """
+
+    neg_risk_exchange: EthAddress
+    """
+    The V2 negative-risk exchange contract responsible for matching orders.
+    """
+
+    neg_risk_adapter: EthAddress
+    """
+    The negative-risk adapter contract.
     """
 
     collateral: EthAddress
     """
-    The ERC20 token used as collateral for the exchange's markets.
+    The ERC20 token used as pUSD collateral for the exchange's markets.
     """
 
     conditional_tokens: EthAddress
@@ -532,5 +610,3 @@ class PastResultsData(BaseModel):
 
 class PastResultsResponse(BaseModel):
     data: PastResultsData
-
-

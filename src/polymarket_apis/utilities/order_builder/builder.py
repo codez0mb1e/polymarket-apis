@@ -1,19 +1,7 @@
+import time
 from typing import Literal
 
-from ens.ens import ChecksumAddress
-from py_order_utils.builders import OrderBuilder as UtilsOrderBuilder
-from py_order_utils.model import (
-    BUY as UTILS_BUY,
-)
-from py_order_utils.model import (
-    EOA,
-    OrderData,
-    SignedOrder,
-)
-from py_order_utils.model import (
-    SELL as UTILS_SELL,
-)
-from py_order_utils.signer import Signer as UtilsSigner
+from eth_typing import ChecksumAddress
 
 from ...types.clob_types import (
     CreateOrderOptions,
@@ -25,7 +13,7 @@ from ...types.clob_types import (
     TickSize,
 )
 from ..config import get_contract_config
-from ..constants import BUY, SELL
+from ..constants import BUY, BYTES32_ZERO, SELL
 from ..exceptions import LiquidityError
 from ..signing.signer import Signer
 from .helpers import (
@@ -34,6 +22,17 @@ from .helpers import (
     round_normal,
     round_up,
     to_token_decimals,
+)
+from .model import (
+    BUY_SIDE,
+    EOA,
+    POLY_1271,
+    SELL_SIDE,
+    OrderData,
+    SignedOrder,
+)
+from .model import (
+    OrderBuilder as V2OrderBuilder,
 )
 
 ROUNDING_CONFIG: dict[TickSize, RoundConfig] = {
@@ -56,10 +55,19 @@ class OrderBuilder:
         # Signature type used sign orders, defaults to EOA type
         self.sig_type = sig_type if sig_type is not None else EOA
 
+        if self.sig_type == POLY_1271 and funder is None:
+            msg = "signature type POLY_1271 requires a funder/deposit wallet address"
+            raise ValueError(msg)
+
         # Address which holds funds to be used.
         # Used for Polymarket proxy wallets and other smart contract wallets
         # Defaults to the address of the signer
         self.funder = funder if funder is not None else self.signer.address()
+
+    def _v2_order_signer(self) -> ChecksumAddress:
+        if self.sig_type == POLY_1271:
+            return self.funder
+        return self.signer.address()
 
     def get_order_amounts(
         self,
@@ -82,7 +90,7 @@ class OrderBuilder:
             maker_amount = to_token_decimals(raw_maker_amt)
             taker_amount = to_token_decimals(raw_taker_amt)
 
-            return UTILS_BUY, maker_amount, taker_amount
+            return BUY_SIDE, maker_amount, taker_amount
         if side == SELL:
             raw_maker_amt = round_down(size, round_config.size)
 
@@ -95,7 +103,7 @@ class OrderBuilder:
             maker_amount = to_token_decimals(raw_maker_amt)
             taker_amount = to_token_decimals(raw_taker_amt)
 
-            return UTILS_SELL, maker_amount, taker_amount
+            return SELL_SIDE, maker_amount, taker_amount
         msg = f"order_args.side must be '{BUY}' or '{SELL}'"
         raise ValueError(msg)
 
@@ -106,7 +114,7 @@ class OrderBuilder:
         price: float,
         round_config: RoundConfig,
     ) -> tuple[Literal[0, 1], int, int]:
-        raw_price = round_normal(price, round_config.price)
+        raw_price = round_down(price, round_config.price)
 
         if side == BUY:
             raw_maker_amt = round_down(amount, round_config.size)
@@ -119,7 +127,7 @@ class OrderBuilder:
             maker_amount = to_token_decimals(raw_maker_amt)
             taker_amount = to_token_decimals(raw_taker_amt)
 
-            return UTILS_BUY, maker_amount, taker_amount
+            return BUY_SIDE, maker_amount, taker_amount
 
         if side == SELL:
             raw_maker_amt = round_down(amount, round_config.size)
@@ -133,7 +141,7 @@ class OrderBuilder:
             maker_amount = to_token_decimals(raw_maker_amt)
             taker_amount = to_token_decimals(raw_taker_amt)
 
-            return UTILS_SELL, maker_amount, taker_amount
+            return SELL_SIDE, maker_amount, taker_amount
         msg = f"order_args.side must be '{BUY}' or '{SELL}'"
         raise ValueError(msg)
 
@@ -152,16 +160,16 @@ class OrderBuilder:
 
         data = OrderData(
             maker=self.funder,
-            taker=order_args.taker,
-            tokenId=order_args.token_id,
-            makerAmount=str(maker_amount),
-            takerAmount=str(taker_amount),
+            token_id=order_args.token_id,
+            maker_amount=str(maker_amount),
+            taker_amount=str(taker_amount),
             side=side,
-            feeRateBps=str(order_args.fee_rate_bps),
-            nonce=str(order_args.nonce),
-            signer=self.signer.address(),
+            signer=self._v2_order_signer(),
+            timestamp=str(time.time_ns() // 1_000_000),
+            metadata=order_args.metadata,
+            builder=order_args.builder_code,
             expiration=str(order_args.expiration),
-            signatureType=self.sig_type,
+            signature_type=self.sig_type,
         )
 
         contract_config = get_contract_config(
@@ -169,10 +177,10 @@ class OrderBuilder:
             options.neg_risk,
         )
 
-        order_builder = UtilsOrderBuilder(
+        order_builder = V2OrderBuilder(
             contract_config.exchange,
             self.signer.get_chain_id(),
-            UtilsSigner(key=self.signer.private_key),
+            self.signer,
         )
 
         return order_builder.build_signed_order(data)
@@ -192,16 +200,16 @@ class OrderBuilder:
 
         data = OrderData(
             maker=self.funder,
-            taker=order_args.taker,
-            tokenId=order_args.token_id,
-            makerAmount=str(maker_amount),
-            takerAmount=str(taker_amount),
+            token_id=order_args.token_id,
+            maker_amount=str(maker_amount),
+            taker_amount=str(taker_amount),
             side=side,
-            feeRateBps=str(order_args.fee_rate_bps),
-            nonce=str(order_args.nonce),
-            signer=self.signer.address(),
+            signer=self._v2_order_signer(),
+            timestamp=str(time.time_ns() // 1_000_000),
+            metadata=order_args.metadata or BYTES32_ZERO,
+            builder=order_args.builder_code or BYTES32_ZERO,
             expiration="0",
-            signatureType=self.sig_type,
+            signature_type=self.sig_type,
         )
 
         contract_config = get_contract_config(
@@ -209,10 +217,10 @@ class OrderBuilder:
             options.neg_risk,
         )
 
-        order_builder = UtilsOrderBuilder(
+        order_builder = V2OrderBuilder(
             contract_config.exchange,
             self.signer.get_chain_id(),
-            UtilsSigner(key=self.signer.private_key),
+            self.signer,
         )
 
         return order_builder.build_signed_order(data)

@@ -8,12 +8,23 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import NoneType, UnionType
-from typing import Annotated, Any, NoReturn, Union, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    NoReturn,
+    Union,
+    get_args,
+    get_origin,
+)
 
 import httpx
 import pytest
 from pydantic import BaseModel, RootModel, TypeAdapter, ValidationError
 from pydantic.aliases import AliasChoices, AliasPath
+
+if TYPE_CHECKING:
+    from _pytest.outcomes import Failed
 
 SNAPSHOT_DIR = Path(__file__).resolve().parents[3] / "tests" / "prod_read" / "snapshots"
 AUTO_EXPAND_CONTRACT = os.getenv("AUTO_EXPAND_CONTRACT") == "1"
@@ -106,8 +117,12 @@ def assert_api_contract(name: str, annotation: Any, payload: Any) -> Any:
     return validated
 
 
+def contract_failure(category: str, message: str) -> Failed:
+    return pytest.fail.Exception(f"[{category}] {message}")
+
+
 def fail_contract(category: str, message: str) -> NoReturn:
-    pytest.fail(f"[{category}] {message}")
+    raise contract_failure(category, message)
 
 
 def _validation_message(name: str, payload: Any, exc: ValidationError) -> str:
@@ -175,11 +190,15 @@ def _read_known_shape(snapshot_path: Path) -> list[str]:
     return []
 
 
-def _merge_shape_snapshot(snapshot_path: Path, name: str, observed_shape: list[str]) -> None:
+def _merge_shape_snapshot(
+    snapshot_path: Path, name: str, observed_shape: list[str]
+) -> None:
     known_shape = _read_known_shape(snapshot_path)
     merged = sorted(set(known_shape) | set(observed_shape))
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_path.write_text(json.dumps({"name": name, "shape": merged}, indent=2) + "\n")
+    snapshot_path.write_text(
+        json.dumps({"name": name, "shape": merged}, indent=2) + "\n"
+    )
 
 
 def _collect_unknown_field_observations(
@@ -316,11 +335,20 @@ def _insert_field_into_model(
     if class_index is None:
         return False
 
-    class_end = _find_class_end(lines, class_index)
+    class_end = len(lines)
+    for index in range(class_index + 1, len(lines)):
+        stripped = lines[index].strip()
+        if not stripped:
+            continue
+        indent = len(lines[index]) - len(lines[index].lstrip())
+        if indent == 0:
+            class_end = index
+            break
+
     if _class_has_field(lines[class_index:class_end], field_name):
         return False
 
-    insert_at = _find_insert_index(lines, class_index, class_end)
+    insert_at = _find_insert_index(lines, class_index)
     rendered_field = _render_field_line(field_name, alias, sample_value)
     lines.insert(insert_at, rendered_field)
     source_path.write_text("\n".join(lines) + "\n")
@@ -335,23 +363,26 @@ def _find_class_index(lines: list[str], class_name: str) -> int | None:
     return None
 
 
-def _find_class_end(lines: list[str], class_index: int) -> int:
+def _find_insert_index(lines: list[str], class_index: int) -> int:
     for index in range(class_index + 1, len(lines)):
         stripped = lines[index].strip()
         if not stripped:
             continue
+
         indent = len(lines[index]) - len(lines[index].lstrip())
         if indent == 0:
-            return index
-    return len(lines)
+            return _rewind_blank_lines(lines, class_index + 1, index)
 
-
-def _find_insert_index(lines: list[str], class_index: int, class_end: int) -> int:
-    for index in range(class_index + 1, class_end):
         stripped = lines[index].lstrip()
         if stripped.startswith(("@", "def ")):
-            return index
-    return class_end
+            return _rewind_blank_lines(lines, class_index + 1, index)
+    return _rewind_blank_lines(lines, class_index + 1, len(lines))
+
+
+def _rewind_blank_lines(lines: list[str], lower_bound: int, index: int) -> int:
+    while index > lower_bound and not lines[index - 1].strip():
+        index -= 1
+    return index
 
 
 def _class_has_field(class_lines: list[str], field_name: str) -> bool:
@@ -368,18 +399,18 @@ def _render_field_line(field_name: str, alias: str, sample_value: Any) -> str:
 
 def _infer_field_type(value: Any) -> str:
     if isinstance(value, bool):
-        return "bool | None"
+        return "Optional[bool]"
     if isinstance(value, int):
-        return "int | None"
+        return "Optional[int]"
     if isinstance(value, float):
-        return "float | None"
+        return "Optional[float]"
     if isinstance(value, str):
-        return "str | None"
+        return "Optional[str]"
     if isinstance(value, list):
-        return "list[object] | None"
+        return "Optional[list[object]]"
     if isinstance(value, dict):
-        return "dict[str, object] | None"
-    return "object | None"
+        return "Optional[dict[str, object]]"
+    return "Optional[object]"
 
 
 def _normalize_field_name(alias: str) -> str:
@@ -449,7 +480,13 @@ def _is_root_model(annotation: Any) -> bool:
 
 
 def _snapshot_slug(name: str) -> str:
-    return name.lower().replace("/", "_").replace("{", "").replace("}", "").replace(" ", "_")
+    return (
+        name.lower()
+        .replace("/", "_")
+        .replace("{", "")
+        .replace("}", "")
+        .replace(" ", "_")
+    )
 
 
 def _format_items(items: list[str]) -> str:

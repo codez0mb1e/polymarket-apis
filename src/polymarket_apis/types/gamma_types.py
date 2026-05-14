@@ -222,7 +222,9 @@ class GammaMarket(BaseModel):
     )
     twitter_card_location: Optional[str] = Field(None, alias="twitterCardLocation")
     fee_schedule: Optional[FeeSchedule] = Field(None, alias="feeSchedule")
-    maker_rebates_fee_share_bps: int | None = Field(None, alias="makerRebatesFeeShareBps")
+    maker_rebates_fee_share_bps: int | None = Field(
+        None, alias="makerRebatesFeeShareBps"
+    )
 
     @field_validator("condition_id", mode="wrap")
     @classmethod
@@ -472,9 +474,7 @@ class Sport(BaseModel):
 
     @field_validator("tags", mode="before")
     @classmethod
-    def split_string_to_int_list(
-        cls, v: str | list[int | str]
-    ) -> list[int] | None:
+    def split_string_to_int_list(cls, v: str | list[int | str]) -> list[int] | None:
         if isinstance(v, str):
             parsed: list[int] = []
             for raw_item in v.split(","):
@@ -613,6 +613,8 @@ class Event(BaseModel):
     sportsradar_match_id: Optional[str] = Field(None, alias="sportsradarMatchId")
     turn_provider_id: Optional[str] = Field(None, alias="turnProviderId")
     election_type: Optional[str] = Field(None, alias="electionType")
+    teams: Optional[list[Team]] = None
+    parent_event_id: Optional[int] = Field(None, alias="parentEventId")
 
 
 class ProfilePosition(BaseModel):

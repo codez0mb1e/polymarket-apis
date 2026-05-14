@@ -1,7 +1,7 @@
 [project]
 name = "polymarket-apis"
-version = "0.5.7"
-description = "Unified Polymarket APIs with Pydantic data validation - Clob, Gamma, Data, Web3, Websockets, GraphQL clients."
+version = "2.1.0"
+description = "Unified Polymarket v2 APIs with Pydantic data validation - Clob, Gamma, Data, Web3, Websockets, GraphQL clients."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
@@ -13,11 +13,11 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "pydantic>=2.10.5",
     "poly-eip712-structs>=0.0.1",
-    "py-order-utils>=0.3.2",
-    "httpx[http2]>=0.25.1",
+    "httpx[http2,socks]>=0.28.1",
     "web3>=7.0",
     "lomond>=0.3.3",
     "gql[httpx]>=4.0.0",
+    "structlog>=24.1.0",
 ]
 
 [dependency-groups]
@@ -76,7 +76,6 @@ markers = [
     "websocket_live: live websocket smoke/invariant tests",
 ]
 
-
 [tool.ruff]
 lint.extend-select = [
     "E",    # Pycodestyle errors (style issues)
@@ -109,7 +108,7 @@ lint.extend-select = [
     "G",    # Flake8-logging-format – logging format string issues
     "INP",  # Flake8-no-pep420 – warns against non-PEP420 namespace usage
     "PIE",  # Flake8-pie – Python improvement suggestions
-    # "T20", # Flake8-print – disallows print statements
+    "T20",  # Flake8-print – disallows print statements
     "PYI",  # Flake8-pyi – checks for type stub (.pyi) consistency
     "PT",   # Flake8-pytest-style – pytest best practices
     "Q",    # Flake8-quotes – enforces quote style consistency
@@ -167,10 +166,14 @@ lint.ignore = [
     "PLR2004",   # Pylint - magic-value-comparison
     "A001",      # Flake8-builtins - builtin-variable-shadowing
     "A002",      # Flake8-builtins - builtin-argument-shadowing
-    "FURB110",    # refurb - if-exp-instead-of-or-operator
-    "PLC0415"    # Pylint - import-outside-top-level
+    "FURB110",   # refurb - if-exp-instead-of-or-operator
+    "PLC0415",   # Pylint - import-outside-top-level
+    "RET503",    # Flake8-return - implicit-return
+    "T201",      # Flake8-print - print
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["EM101", "S101", "S106", "TRY003"]
 
 [project.urls]
 repository = "https://github.com/qualiaenjoyer/polymarket-apis"
